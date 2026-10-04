@@ -5,6 +5,8 @@
 #include "../iohc.h"
 #include "../iohc_remote1w.h"
 #include <Preferences.h>
+#include <vector>
+#include <array>
 
 namespace esphome {
 namespace iohc {
@@ -134,6 +136,30 @@ class IOHCCover : public cover::Cover, public Component {
   // entity" rule, which this deliberately does not fall under.
   void update_real_position_authoritative(float closure_percent);
 
+  // Physical-remote mirroring (1W). Empty list (the default) = fully
+  // TX-only, same as upstream: this bridge decodes nothing it didn't send
+  // itself, exactly like a real Situo. Listing one or more 3-byte addresses
+  // here (the physical remote's own `source`, as seen in a VERY_VERBOSE RX
+  // log - see README) makes this cover mirror that remote's Open/Close/
+  // Stop/My presses into its own HA state, the same way a TaHoma press
+  // already does for motor_address/2W above - just keyed by remote address
+  // instead of motor address, and 1W instead of 2W. Deliberately NOT a
+  // generic "listen to everything" switch - an unlisted remote (a
+  // neighbour's, say) is silently ignored, never applied.
+  void add_allowed_remote(const std::string &address_hex);
+  bool remote_is_allowed(const IOHC::address &source) const;
+  // IOHCComponent::on_receive()'s entry point for a decoded 1W frame from an
+  // allowed remote. main0 is the frame's header.cmd==0x00 payload main[0]
+  // byte (0x00 Open / 0xc8 Close / 0xd2 Stop / 0xd8 Vent-My - see
+  // iohc_remote1w.cpp's own RemoteButton::Open/Close/Stop/Vent cases for
+  // where these values come from on the TX side; this is the same encoding,
+  // just received instead of sent). Deliberately mirrors control()'s own
+  // state-update side (position/current_operation/publish_state()) without
+  // ever calling remote_.cmd() - the frame already happened on the air, so
+  // re-sending it would just be a pointless, possibly colliding, duplicate
+  // transmission.
+  void handle_remote_command(uint8_t main0);
+
  protected:
   void control(const cover::CoverCall &call) override;
 
@@ -170,6 +196,11 @@ class IOHCCover : public cover::Cover, public Component {
   std::string nvs_key_;
   IOHC::address motor_address_{};
   bool has_motor_address_{false};
+  // std::array<uint8_t,3>, NOT IOHC::address (uint8_t[3]) - a raw C array
+  // type can't be a std::vector element (not assignable), so this stores
+  // the equivalent as std::array and converts on each add_allowed_remote()/
+  // remote_is_allowed() call instead.
+  std::vector<std::array<uint8_t, 3>> allowed_remotes_{};
 
   Mode mode_{Mode::POSITION};
   // Explicitly global-scoped: inside esphome::iohc, unqualified "Preferences"

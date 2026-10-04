@@ -132,13 +132,13 @@ namespace IOHC {
         // payload checks elsewhere) then trigger a harmless but constant
         // "IO 26/32 is not set as GPIO" warning from esp32-hal-gpio.c every
         // time. Explicit pinMode() here silences it.
-        pinMode(RADIO_DIO0_PIN, INPUT);
-        pinMode(RADIO_DIO2_PIN, INPUT);
+        pinMode(g_radio_pins.dio0, INPUT);
+        pinMode(g_radio_pins.dio2, INPUT);
         //        attachInterrupt(RADIO_PACKET_AVAIL, i_payload, CHANGE); //
         //        attachInterrupt(RADIO_PREAMBLE_DETECTED, i_preamble, CHANGE); //
-        attachInterrupt(RADIO_DIO0_PIN, handle_interrupt_fromisr, RISING); //CHANGE); //
-        //        attachInterrupt(RADIO_DIO1_PIN, handle_interrupt_fromisr, RISING); // CHANGE); //
-        attachInterrupt(RADIO_DIO2_PIN, handle_interrupt_fromisr, RISING); //CHANGE); //
+        attachInterrupt(g_radio_pins.dio0, handle_interrupt_fromisr, RISING); //CHANGE); //
+        //        attachInterrupt(g_radio_pins.dio1, handle_interrupt_fromisr, RISING); // CHANGE); //
+        attachInterrupt(g_radio_pins.dio2, handle_interrupt_fromisr, RISING); //CHANGE); //
 #elif defined(CC1101)
         attachInterrupt(RADIO_PREAMBLE_DETECTED, i_preamble, RISING);
 #endif
@@ -555,7 +555,7 @@ bool queueCallback(IohcPacketDelegate* callback, iohcPacket* packet) {
  * @return The function `iohcRadio::receive` is returning a boolean value `true`.
  */
     bool IRAM_ATTR iohcRadio::receive(bool stats = false) {
-        digitalWrite(RX_LED, digitalRead(RX_LED) ^ 1);
+        if (g_radio_pins.led >= 0) digitalWrite(g_radio_pins.led, digitalRead(g_radio_pins.led) ^ 1);
         // bool frmErr = false;
         auto iohc = new iohcPacket;
         iohc->buffer_length = 0;
@@ -666,7 +666,7 @@ bool queueCallback(IohcPacketDelegate* callback, iohcPacket* packet) {
         if (rxCB && !queueCallback(&rxCB, iohc)) {
             delete iohc;
         }
-        digitalWrite(RX_LED, false);
+        if (g_radio_pins.led >= 0) digitalWrite(g_radio_pins.led, false);
         return true;
     }
 

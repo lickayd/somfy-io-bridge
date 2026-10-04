@@ -39,6 +39,7 @@ CONF_MY_PATTERN = "my_pattern"
 CONF_INVERT = "invert"
 CONF_TRAVEL_TIME_OPEN = "travel_time_open"
 CONF_TRAVEL_TIME_CLOSE = "travel_time_close"
+CONF_ALLOWED_REMOTES = "allowed_remotes"
 
 IOHCCover = iohc_ns.class_("IOHCCover", cover.Cover, cg.Component)
 
@@ -131,6 +132,16 @@ CONFIG_SCHEMA = cover.cover_schema(IOHCCover, device_class="shutter").extend(
         # change it live from Home Assistant afterward without reflashing.
         cv.Optional(CONF_TRAVEL_TIME_OPEN, default=25): cv.int_range(min=1, max=120),
         cv.Optional(CONF_TRAVEL_TIME_CLOSE, default=25): cv.int_range(min=1, max=120),
+        # Physical-remote mirroring (see iohc_cover.h's add_allowed_remote()/
+        # handle_remote_command()). Each entry is a remote's own 3-byte
+        # source address (6 hex chars) - find it by setting `logger: level:
+        # VERBOSE` and pressing the physical remote; it shows up as "1W FROM
+        # <address> TO ...". Empty (the default) = fully TX-only, same as
+        # upstream: an un-added remote (a neighbour's, say) is silently
+        # ignored, never applied to this cover's state. A list, not a single
+        # value, since one cover can legitimately have more than one
+        # physical remote paired to it.
+        cv.Optional(CONF_ALLOWED_REMOTES, default=[]): cv.ensure_list(validate_hex_string(6)),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -172,3 +183,6 @@ async def to_code(config):
 
     cg.add(var.set_travel_time_open_default(config[CONF_TRAVEL_TIME_OPEN]))
     cg.add(var.set_travel_time_close_default(config[CONF_TRAVEL_TIME_CLOSE]))
+
+    for remote_hex in config[CONF_ALLOWED_REMOTES]:
+        cg.add(var.add_allowed_remote(remote_hex))

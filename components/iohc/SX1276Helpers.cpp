@@ -54,14 +54,14 @@ namespace Radio {
  */
     void IRAM_ATTR SPI_beginTransaction() {
         SPI.beginTransaction(Radio::SpiSettings);
-        digitalWrite(RADIO_NSS, LOW);
+        digitalWrite(IOHC::g_radio_pins.cs, LOW);
     }
 
 /**
  * The function `SPI_endTransaction` ends the SPI transaction and sets the RADIO_NSS pin to HIGH.
  */
     void IRAM_ATTR SPI_endTransaction() {
-        digitalWrite(RADIO_NSS, HIGH);
+        digitalWrite(IOHC::g_radio_pins.cs, HIGH);
         SPI.endTransaction();
     }
 
@@ -72,16 +72,18 @@ namespace Radio {
     void initHardware() {
         ESP_LOGV(TAG, "SPI Init");
 
-        //gpio_pullup_en((gpio_num_t) RADIO_MISO);
+        const auto &pins = IOHC::g_radio_pins;
 
-        pinMode(RADIO_MISO, INPUT_PULLUP);
+        //gpio_pullup_en((gpio_num_t) pins.miso);
+
+        pinMode(pins.miso, INPUT_PULLUP);
 
         // SPI pins configuration
 
-        pinMode(RADIO_RESET, INPUT); // Connected to Reset; floating for POR
+        pinMode(pins.rst, INPUT); // Connected to Reset; floating for POR
 
         // Check the availability of the Radio
-        while (!digitalRead(RADIO_RESET)) {
+        while (!digitalRead(pins.rst)) {
 #if defined(ESP32)
             esp_task_wdt_reset();
 #endif
@@ -91,7 +93,7 @@ namespace Radio {
 
         // Initialize SPI bus
 #if defined(ESP32)
-        SPI.begin(RADIO_SCLK, RADIO_MISO, RADIO_MOSI, RADIO_NSS);
+        SPI.begin(pins.sclk, pins.miso, pins.mosi, pins.cs);
 #endif
         // SPI.setFrequency(SPI_CLK_FRQ);
         // SPI.setDataMode(SPI_MODE0);
@@ -100,10 +102,10 @@ namespace Radio {
 
         // Disable SPI device
         // Disable device NRESET pin
-        pinMode(RADIO_NSS, OUTPUT);
-        pinMode(RADIO_RESET, OUTPUT);
-        digitalWrite(RADIO_RESET, HIGH);
-        digitalWrite(RADIO_NSS, HIGH);
+        pinMode(pins.cs, OUTPUT);
+        pinMode(pins.rst, OUTPUT);
+        digitalWrite(pins.rst, HIGH);
+        digitalWrite(pins.cs, HIGH);
         delayMicroseconds(BOARD_READY_AFTER_POR);
 
         // SPI.beginTransaction(Radio::SpiSettings);
@@ -111,8 +113,12 @@ namespace Radio {
 
         writeByte(REG_OPMODE, RF_OPMODE_STANDBY); // Put Radio in Standby mode
 
-        pinMode(SCAN_LED, OUTPUT);
-        digitalWrite(SCAN_LED, 1);
+        // -1 = no scan/RX LED wired (most non-LilyGO installs) - skip it
+        // entirely rather than pinMode()/digitalWrite() on a bogus pin.
+        if (pins.led >= 0) {
+            pinMode(pins.led, OUTPUT);
+            digitalWrite(pins.led, 1);
+        }
         ESP_LOGV(TAG, "Radio Chip is ready");
     }
 

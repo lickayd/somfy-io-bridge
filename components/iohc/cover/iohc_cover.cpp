@@ -3,6 +3,7 @@
 #include "../iohcCryptoHelpers.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 namespace esphome {
@@ -20,6 +21,7 @@ static std::string cover_nvs_namespace_for(const std::string &nvs_key) {
 }
 
 void IOHCCover::setup() {
+  parent_->register_cover(this);
   remote_.set_type(type_);
   remote_.set_manufacturer(manufacturer_);
   // Bonded identity/sequence persist per-cover (see iohc_remote1w.cpp) -
@@ -67,6 +69,101 @@ void IOHCCover::set_motor_address(const std::string &motor_address_hex) {
     return;
   hexStringToBytes(motor_address_hex, motor_address_);
   has_motor_address_ = true;
+}
+
+void IOHCCover::add_allowed_remote(const std::string &address_hex) {
+  if (address_hex.empty())
+    return;
+  IOHC::address tmp{};
+  hexStringToBytes(address_hex, tmp);
+  allowed_remotes_.push_back({tmp[0], tmp[1], tmp[2]});
+}
+
+bool IOHCCover::remote_is_allowed(const IOHC::address &source) const {
+  for (const auto &addr : allowed_remotes_) {
+    if (memcmp(addr.data(), source, sizeof(IOHC::address)) == 0)
+      return true;
+  }
+  return false;
+}
+
+void IOHCCover::handle_remote_command(uint8_t main0) {
+  // Mode::TWO_WAY already gets real position feedback from
+  // update_real_position_authoritative() (actively solicited, verified via
+  // the live 2W challenge/response) - a 1W frame has no such verification,
+  // so deliberately not applied there, same reasoning as that function's
+  // own "never let an unvalidated side-channel corrupt the primary entity"
+  // comment.
+  if (mode_ == Mode::TWO_WAY)
+    return;
+
+  if (main0 == 0xd2) {  // Stop
+    if (mode_ == Mode::MY) {
+      this->position = 0.5f;
+      cover_prefs_.putFloat("position", 0.5f);
+    } else {
+      remote_.position_tracker().stop();
+      target_position_ = -1.0f;
+      float raw = remote_.position_tracker().getPosition() / 100.0f;
+      cover_prefs_.putFloat("position", invert_ ? (1.0f - raw) : raw);
+    }
+    this->current_operation = cover::COVER_OPERATION_IDLE;
+    this->publish_state();
+    return;
+  }
+
+  if (main0 == 0xd8) {  // Vent/My - same "favorite position" press_my() sends
+    this->position = 0.5f;
+    cover_prefs_.putFloat("position", 0.5f);
+    target_position_ = -1.0f;
+    this->current_operation = cover::COVER_OPERATION_IDLE;
+    this->publish_state();
+    return;
+  }
+
+  if (main0 != 0x00 && main0 != 0xc8) {
+    // An arbitrary percentage target (Position) from another 1W Position-
+    // capable remote - not mirrored yet, no real captures to confirm the
+    // exact byte range/formula a non-Situo remote might use here. Logged at
+    // DEBUG rather than silently dropped so it's visible if this ever comes
+    // up on real hardware.
+    ESP_LOGD(TAG, "Allowed remote sent unrecognized 1W main=0x%02x - not mirrored", main0);
+    return;
+  }
+
+  // main0 == 0x00 (Open) or 0xc8 (Close) - raw/motor-space direction. This
+  // is the physical remote's own real-world direction, independent of
+  // Invert Direction (that flag only affects what THIS bridge chooses to
+  // send, never what a remote already on the air means) - same raw-space
+  // handling loop()'s reached-target check and update_real_position_
+  // authoritative() both already use, see their own comments.
+  bool raw_opening = (main0 == 0x00);
+
+  if (mode_ == Mode::MY) {
+    bool ha_open = raw_opening ? !invert_ : invert_;
+    this->position = ha_open ? 1.0f : 0.0f;
+    cover_prefs_.putFloat("position", this->position);
+    this->current_operation = cover::COVER_OPERATION_IDLE;
+    this->publish_state();
+    return;
+  }
+
+  // Mode::POSITION - hand off to the same BlindPosition tracker loop()
+  // already animates from, without transmitting anything (the frame this
+  // came from already happened on the air).
+  if (raw_opening) {
+    remote_.position_tracker().startOpening();
+    target_position_ = invert_ ? 0.0f : 100.0f;
+    target_raw_opening_ = true;
+    this->current_operation = invert_ ? cover::COVER_OPERATION_CLOSING : cover::COVER_OPERATION_OPENING;
+  } else {
+    remote_.position_tracker().startClosing();
+    target_position_ = invert_ ? 100.0f : 0.0f;
+    target_raw_opening_ = false;
+    this->current_operation = invert_ ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
+  }
+  // loop()'s own tracker.update()/publish_state() picks up from here on the
+  // next tick, same as it does for a locally-initiated command.
 }
 
 void IOHCCover::update_real_position_authoritative(float closure_percent) {

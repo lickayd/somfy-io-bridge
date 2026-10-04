@@ -26,6 +26,9 @@ static constexpr uint32_t HOP_CHANNELS[3] = {CHANNEL2, CHANNEL1, CHANNEL3};
 
 void IOHCComponent::setup() {
   ESP_LOGCONFIG(TAG, "Starting IOHC radio (vendored rspaargaren/iohomecontrol stack)...");
+  // Must happen before iohcRadio::start() - that's what calls
+  // SX1276Helpers::initHardware(), which reads IOHC::g_radio_pins.
+  IOHC::g_radio_pins = radio_pins_;
   IOHC::IohcPacketDelegate rx_cb(&IOHCComponent::on_receive, this);
   IOHC::iohcRadio::getInstance()->start(1, scan_freqs, 0, rx_cb, nullptr);
   controller2w_.begin(IOHC::iohcRadio::getInstance(), this, fixed_controller_hex_, fixed_system_key_hex_);
@@ -87,6 +90,34 @@ void IOHCComponent::set_bonding_hop_wanted(bool wanted) {
 
 bool IOHCComponent::on_receive(IOHC::iohcPacket *packet) {
   this->packets_received_++;
+
+  // 1W remote mirroring - always on (independent of passive_decode_wanted_
+  // below), but a cheap no-op unless at least one cover has allowed_remotes
+  // configured (see cover/iohc_cover.h's add_allowed_remote()): just a
+  // memcmp against each cover's own short address list, no decrypt/HMAC/
+  // channel-hop involved, so this doesn't carry the same stability risk the
+  // 2026-07-13 incident (passive_decode_wanted_, below) was added to guard
+  // against - that flag stays scoped to 2W bonding/key-sniffing only.
+  if (!covers_.empty() && packet->payload.packet.header.cmd == 0x00 &&
+      packet->buffer_length >= sizeof(IOHC::_header) + sizeof(IOHC::_p0x00_14)) {
+    const auto &source = packet->payload.packet.header.source;
+    bool matched = false;
+    for (auto *cover : covers_) {
+      if (cover->remote_is_allowed(source)) {
+        matched = true;
+        cover->handle_remote_command(packet->payload.packet.msg.p0x00_14.main[0]);
+      }
+    }
+    if (!matched) {
+      // VERBOSE, not DEBUG/INFO: deliberately quiet by default (set
+      // `logger: level: VERBOSE` in YAML to see it) - with allowed_remotes
+      // actually in use, this fires for every Open/Close/Stop a neighbour's
+      // (or an un-added) remote sends on the same channel, which is
+      // expected, not a fault.
+      ESP_LOGV(TAG, "Ignored 1W frame from %02X%02X%02X (not in any cover's allowed_remotes)", source[0], source[1],
+                source[2]);
+    }
+  }
 
   // Diagnostic-only: while off, this bridge behaves like a real Situo (only
   // transmits, never continuously decodes received traffic) - see

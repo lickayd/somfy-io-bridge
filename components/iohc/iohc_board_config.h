@@ -1,50 +1,21 @@
 #pragma once
 
-// Board pin configuration for LilyGO TTGO T3 LoRa32 868MHz V1.6.1 - renamed
-// from upstream's "board-config.h" (too generic a name to risk colliding
-// with another library's own header once everything sits flat in one
-// ESPHome external_component directory - see iohc.h for why it's flat at
-// all). Content is NOT copied from upstream's file's LILYGO block, which
-// lists RADIO_RST_PIN=14. That's wrong for this exact board: GPIO23 is confirmed
-// correct two ways - (1) the official schematic
-// (Xinyuan-LilyGO/LilyGo-LoRa-Series/schematic/T3_V1.6.1.pdf) explicitly
-// labels "IO23=RESET", and (2) empirically, reading the SX1276 version
-// register via GPIO23 as reset returns the correct 0x12 on real hardware.
-// DIO0/DIO1/DIO2 do match upstream's LILYGO block and our own schematic
-// read/hands-on confirmation (DIO0=26 used by the RTS bridge's sibling
-// board, DIO2=32 already proven working for RTS).
+// Protocol-level constants only. Board-specific RADIO_*_PIN/BOARD_LED_PIN/
+// I2C_*_PIN/DISPLAY_OLED_RST_PIN values used to live here as compile-time
+// #defines (one fixed board per build) - they're now runtime-configurable
+// via iohc_pins.h/IOHC::g_radio_pins, set from YAML (see iohc/__init__.py's
+// pin options), because this bridge runs on more than one board layout
+// (LilyGO T3 LoRa32, a bare ESP32-S3-DevKitC-1 + separate SX1276 module,
+// ...) and a single hardcoded header can't serve all of them at once.
 //
-// Protocol constants (preamble, sync bytes, channel plan) are unchanged from
-// upstream - those are properties of io-homecontrol itself, not the board.
+// Everything below is a property of io-homecontrol itself (or of the
+// SX1276/SX1278 chip family in general), not of any particular board, so it
+// stays a compile-time constant.
+
+#include "iohc_pins.h"
 
 #define RADIO_SX127X
 #define Regulatory_Domain_EU_868
-
-#define RADIO_SCLK_PIN 5
-#define RADIO_MISO_PIN 19
-#define RADIO_MOSI_PIN 27
-#define RADIO_CS_PIN 18
-#define RADIO_RST_PIN 23
-#define RADIO_DIO0_PIN 26
-#define RADIO_DIO1_PIN 33
-#define RADIO_DIO2_PIN 32
-#define BOARD_LED_PIN 25
-
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
-#define DISPLAY_OLED_RST_PIN -1
-
-#define RADIO_MOSI RADIO_MOSI_PIN
-#define RADIO_MISO RADIO_MISO_PIN
-#define RADIO_SCLK RADIO_SCLK_PIN
-#define RADIO_RESET RADIO_RST_PIN
-#define RADIO_NSS RADIO_CS_PIN
-
-#define RADIO_DIO_0 RADIO_DIO0_PIN
-#define RADIO_DIO_4 RADIO_DIO2_PIN
-
-#define RADIO_PACKET_AVAIL RADIO_DIO_0   // Packet Received / CRC ok from Radio
-#define RADIO_PREAMBLE_DETECTED RADIO_DIO_4  // Preamble detected from Radio
 
 #define SPI_CLK_FRQ 10000000
 
@@ -70,6 +41,3 @@
 // cooperative (non-interrupt) hop checked every loop() tick - see that
 // function's own comment for why this is the safe way to do it.
 #define MAX_FREQS 1
-
-#define SCAN_LED BOARD_LED_PIN
-#define RX_LED SCAN_LED

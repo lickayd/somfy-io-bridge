@@ -15,7 +15,10 @@
 #include "esphome/core/component.h"
 #include "iohcRadio.h"
 #include "iohc_controller2w.h"
+#include "iohc_pins.h"
 #include <string>
+#include <vector>
+#include <array>
 
 namespace esphome {
 namespace iohc {
@@ -30,6 +33,23 @@ class IOHCComponent : public Component {
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
   bool on_receive(IOHC::iohcPacket *packet);
+
+  // Board pin mapping (SPI + DIO0/DIO2 + optional scan LED) - set from
+  // iohc/__init__.py's YAML pin options, applied to the shared
+  // IOHC::g_radio_pins global in setup() BEFORE iohcRadio::start() runs
+  // initHardware(). See iohc_pins.h for why this is a single shared global
+  // rather than per-instance state (the vendored radio stack is itself a
+  // singleton, iohcRadio::getInstance()).
+  void set_radio_pins(const IOHC::RadioPins &pins) { radio_pins_ = pins; }
+
+  // Self-registration (called from IOHCCover::setup()) so on_receive() can
+  // offer every decoded 1W frame to each cover's own allowed_remotes list -
+  // see cover/iohc_cover.h's add_allowed_remote()/handle_remote_command().
+  // Intentionally a flat vector, not a map keyed by address: a single
+  // physical remote can legitimately be listed on more than one cover (e.g.
+  // a multi-channel Situo), so this has to check every cover, not stop at
+  // the first address match.
+  void register_cover(IOHCCover *cover) { covers_.push_back(cover); }
 
   // This bridge's own 2W bonding/control (Phase 3) - one shared instance for
   // the whole bridge, see iohc_controller2w.h. Distinct from the passive
@@ -105,6 +125,7 @@ class IOHCComponent : public Component {
   bool manual_hop_wanted_{false};
   bool bonding_hop_wanted_{false};
   bool passive_decode_wanted_{false};
+  IOHC::RadioPins radio_pins_{};
   std::string fixed_controller_hex_;
   std::string fixed_system_key_hex_;
 
@@ -112,6 +133,7 @@ class IOHCComponent : public Component {
   // Total received frame count, any source - only used for the debug log
   // line in on_receive() (frame numbering).
   uint32_t packets_received_{0};
+  std::vector<IOHCCover *> covers_;
 };
 
 }  // namespace iohc
